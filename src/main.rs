@@ -13,9 +13,9 @@ fn main() {
     parser.set_language(language).unwrap();
     let code = fs::read_to_string("./example.sol").unwrap();
     let parsed = parser.parse(&code, None).unwrap();
-    // parsed.walk();
+
     let root = parsed.root_node();
-    let func_comm_query_string = fs::read_to_string("./query_func_comment").unwrap();
+    let func_comm_query_string = fs::read_to_string("./query/func_comment.sexp").unwrap();
     let fc_query = Query::new(language, &func_comm_query_string).unwrap();
     let mut fc_qc = QueryCursor::new();
     let matches = fc_qc.matches(&fc_query, root, code.as_bytes());
@@ -62,7 +62,7 @@ fn main() {
     }
 
     // find all function calls
-    let query_string = fs::read_to_string("query.sexp").unwrap();
+    let query_string = fs::read_to_string("query/func_call.sexp").unwrap();
     let query = Query::new(language, &query_string).unwrap();
     let mut query_cursor = QueryCursor::new();
     let matches = query_cursor.matches(&query, root, code.as_bytes());

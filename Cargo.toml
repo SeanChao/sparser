@@ -7,7 +7,7 @@ edition = "2018"
 
 [dependencies]
 tree-sitter="0.20.4"
-regex = "1"
+regex="1"
 
 [build-dependencies]
 cc="*"
