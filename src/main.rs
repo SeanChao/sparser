@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::Write;
 use tree_sitter::{Language, Node, Parser, Query, QueryCapture, QueryCursor};
+use walkdir::{DirEntry, WalkDir};
 
 extern "C" {
     fn tree_sitter_solidity() -> Language;
@@ -272,7 +273,6 @@ fn process_func_comm(code: &str, parser: &mut Parser, language: Language) -> Vec
                     comment.push_str(&com);
                 }
                 "func_src" => {
-                    println!("match src");
                     let body = get_node_text(capture.node, &code);
                     src = body;
                 }
@@ -311,17 +311,28 @@ fn main() {
         &_ => panic!("unknown task"),
     };
 
-    let paths = fs::read_dir(data_dir).unwrap();
     let mut all_samples = Vec::new();
-    for file in paths {
-        let file_path = file.unwrap().path();
+    let paths: Vec<DirEntry> = WalkDir::new(data_dir)
+        .into_iter()
+        .map(|e| e.unwrap())
+        .collect();
+    let paths_len = paths.len();
+    for (idx, entry) in paths.iter().enumerate() {
+        print!("\x1b[K\r{}/{}", idx + 1, paths_len);
+        let file_path = entry.path();
         if file_path.is_file() {
-            println!("processing: {}", file_path.to_str().unwrap());
-            let src = fs::read_to_string(file_path).unwrap();
-            let mut file_samples = task_fp(&src, &mut parser, language);
-            all_samples.append(&mut file_samples);
+            match fs::read_to_string(file_path) {
+                Ok(src) => {
+                    let mut file_samples = task_fp(&src, &mut parser, language);
+                    all_samples.append(&mut file_samples);
+                }
+                Err(e) => {
+                    eprintln!("{} NOT FOUND: {}", file_path.to_str().unwrap(), e);
+                }
+            }
         }
     }
+    println!();
     save_dataset(out_dir, &all_samples);
 }
 
