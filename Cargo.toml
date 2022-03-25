@@ -7,12 +7,19 @@ edition = "2018"
 
 [dependencies]
 tree-sitter="0.20.4"
+tree-sitter-python = "0.19.1"
 rand="0.8"
 regex="1"
 clap={version="3.1", features=["derive"]}
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 walkdir = "2"
+simple_logger = "2.1.0"
+lazy_static = "1.4.0"
+linya = "0.2.2"
+log = "0.4.14"
+tokio = { version = "1", features = ["full"] }
+rayon = "1.5.1"
 
 
 [build-dependencies]

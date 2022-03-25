@@ -67,6 +67,17 @@ pub fn save_dataset(path_prefix: &str, samples: &Vec<DataSample>) {
     write_to_json(&test_samples, &format!("{}/test.jsonl", path_prefix));
 }
 
+pub fn append_jsonl_to_file<T: Serialize>(
+    samples: &Vec<T>,
+    file: &mut File,
+) -> std::io::Result<()> {
+    for sample in samples {
+        let json_string = serde_json::to_string(sample).unwrap() + "\n";
+        file.write(json_string.as_bytes())?;
+    }
+    Ok(())
+}
+
 pub fn write_to_json_gen<T: Serialize>(samples: &Vec<T>, file_path: &str) {
     println!("Writing to {}", file_path);
     let mut file = File::create(file_path).unwrap();
