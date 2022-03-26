@@ -31,6 +31,11 @@ struct Args {
 #[derive(Debug, Clone, Copy)]
 enum TargetLanguage {
     Python,
+    Javascript,
+    Java,
+    Go,
+    Php,
+    Ruby,
 }
 
 impl FromStr for TargetLanguage {
@@ -38,7 +43,12 @@ impl FromStr for TargetLanguage {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
+            "go" => Ok(TargetLanguage::Go),
+            "javascript" => Ok(TargetLanguage::Javascript),
+            "java" => Ok(TargetLanguage::Java),
+            "php" => Ok(TargetLanguage::Php),
             "python" => Ok(TargetLanguage::Python),
+            "ruby" => Ok(TargetLanguage::Ruby),
             _ => Err(format!("Unknown language: {}", s)),
         }
     }
@@ -55,14 +65,10 @@ async fn main() {
     let data_dir = args.data;
     let out_file = args.out;
     let lang = args.lang;
-    let language = match lang {
-        TargetLanguage::Python => tree_sitter_python::language(),
-    };
-
-    run_preprocessing(&data_dir, &out_file, language).await;
+    run_preprocessing(&data_dir, &out_file, lang).await;
 }
 
-async fn run_preprocessing(data_dir: &str, out_file: &str, language: Language) {
+async fn run_preprocessing(data_dir: &str, out_file: &str, language: TargetLanguage) {
     let (tx, mut rx) = mpsc::channel(10);
     let data_dir = data_dir.to_string();
     let input_th = tokio::spawn(async move { read_input_data(data_dir.as_str(), tx).await });
@@ -74,9 +80,9 @@ async fn run_preprocessing(data_dir: &str, out_file: &str, language: Language) {
     let mut processing_threads = Vec::new();
     while let Some(sample_group) = rx.recv().await {
         let file = file.clone();
+        debug!("recv {}", sample_group.len());
         processing_threads.push(tokio::spawn(async move {
             let samples = process_grouped_samples(&sample_group, language).await;
-            debug!("recv {}", samples.len());
             let samples: Vec<(Vec<String>, Vec<String>, Vec<String>, Vec<String>, bool)> = samples
                 .into_par_iter()
                 .map(|(caller, callee, label)| {
@@ -181,10 +187,23 @@ async fn read_input_data(data_dir: &str, tx: Sender<Vec<JsonSample>>) {
     }
 }
 
+macro_rules! get_tree_sitter_language {
+    ($lang: expr) => {
+        match $lang {
+            TargetLanguage::Python => tree_sitter_python::language(),
+            TargetLanguage::Javascript => tree_sitter_javascript::language(),
+            TargetLanguage::Go => tree_sitter_go::language(),
+            TargetLanguage::Java => tree_sitter_java::language(),
+            TargetLanguage::Ruby => tree_sitter_ruby::language(),
+            TargetLanguage::Php => unsafe { tree_sitter_php() },
+        }
+    };
+}
+
+
 async fn process_grouped_samples(
     sample_group: &Vec<JsonSample>,
-    // parser: &mut Parser,
-    language: Language,
+    lang: TargetLanguage,
 ) -> Vec<(JsonSample, JsonSample, bool)> {
     let res: Vec<Vec<(JsonSample, JsonSample, bool)>> = sample_group
         .par_iter()
@@ -192,20 +211,16 @@ async fn process_grouped_samples(
             let mut all_samples = Vec::new();
             // find all function calls in this sample
             let code = &sample.code;
+            let parser_lang = get_tree_sitter_language!(lang);
             let mut parser = tree_sitter::Parser::new();
-            parser.set_language(language).unwrap();
+            parser.set_language(parser_lang).unwrap();
             let root = parser.parse(code, None).unwrap();
-            // let mut other_funcs = sample_group
-            //     .clone()
-            //     .into_iter()
-            //     .map(|e| (e.func_name.clone(), e))
-            //     .collect::<BTreeMap<String, JsonSample>>();
             let mut other_funcs = sample_group
                 .iter()
                 .map(|e| (e.func_name.as_str(), e))
                 .collect::<BTreeMap<&str, &JsonSample>>();
             other_funcs.retain(|k, _v| *k != &sample.func_name);
-            let callees = find_function_calls(language, code, root.root_node(), |func_name| {
+            let callees = find_function_calls(lang, code, root.root_node(), |func_name| {
                 other_funcs.contains_key(func_name)
             });
             let mut non_callees = other_funcs.clone();
@@ -252,10 +267,37 @@ const PYTHON_SEXP_FUNC_CALL: &str = "
 (call
   function: (identifier) @function)";
 
-// use sparser::main::{get_node_text};
+const JAVASCRIPT_SEXP_FUNC_CALL: &str = "
+(call_expression
+  function: (identifier) @function)
+(call_expression
+  function: (member_expression
+    property: (property_identifier) @function.method))
+";
+const JAVA_SEXP_FUNC_CALL: &str = "(method_declaration
+  name: (identifier) @function.method)
+(method_invocation
+  name: (identifier) @function.method)
+";
+const GO_SEXP_FUNC_CALL: &str = "
+(call_expression
+  function: (identifier) @function)
+(call_expression
+  function: (selector_expression
+    field: (field_identifier) @function.method))";
+
+const RUBY_SEXP_FUNC_CALL: &str = "
+(call
+  method: [(identifier) (constant)] @function.method)";
+const PHP_SEXP_FUNC_CALL: &str = "
+(member_call_expression
+  name: (name) @function.method)
+(function_call_expression
+  function: (qualified_name (name)) @function)
+";
 
 fn find_function_calls<F>(
-    language: Language,
+    language: TargetLanguage,
     code: &str,
     root: Node,
     func_validate_fn: F,
@@ -263,10 +305,18 @@ fn find_function_calls<F>(
 where
     F: Fn(&str) -> bool,
 {
-    let query_string = PYTHON_SEXP_FUNC_CALL;
+    let query_string = match language {
+        TargetLanguage::Python => PYTHON_SEXP_FUNC_CALL,
+        TargetLanguage::Javascript => JAVASCRIPT_SEXP_FUNC_CALL,
+        TargetLanguage::Java => JAVA_SEXP_FUNC_CALL,
+        TargetLanguage::Go => GO_SEXP_FUNC_CALL,
+        TargetLanguage::Ruby => RUBY_SEXP_FUNC_CALL,
+        TargetLanguage::Php => PHP_SEXP_FUNC_CALL,
+    };
+    let language = get_tree_sitter_language!(language);
     let query = Query::new(language, &query_string).unwrap();
     let mut query_cursor = QueryCursor::new();
-    let matches = query_cursor.matches(&query, root, code.as_bytes());
+    let matches = query_cursor.matches(&query, root,|_| code.as_bytes());
     let mut callees = HashSet::new();
     for m in matches {
         for capture in m.captures {
@@ -286,3 +336,21 @@ where
     }
     callees
 }
+
+extern "C" {
+    fn tree_sitter_php() -> Language;
+}
+
+// fn get_tree_sitter_language(lang: TargetLanguage) -> tree_sitter_python::tree_sitter::language() {
+//     // let lan = tree_sitter_python::language();
+//     match lang {
+//         TargetLanguage::Python => tree_sitter_python::language(),
+//         // TargetLanguage::Javascript => tree_sitter_javascript::language(),
+//         // TargetLanguage::Go => tree_sitter_go::language(),
+//         // TargetLanguage::Java => tree_sitter_java::language(),
+//         // TargetLanguage::Ruby => tree_sitter_ruby::language(),
+//         // TargetLanguage::Php => unsafe { tree_sitter_php() },
+//         _ => panic!(),
+//     }
+// }
+
