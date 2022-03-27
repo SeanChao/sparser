@@ -1,4 +1,5 @@
 use clap::Parser as ArgsParser;
+use futures::StreamExt;
 use linya::Progress;
 use log::{debug, error};
 use rayon::prelude::*;
@@ -26,6 +27,8 @@ struct Args {
     out: String,
     #[clap(short = 'l', long)]
     lang: TargetLanguage,
+    #[clap(short = 't', long, default_value_t=num_cpus::get())]
+    threads: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -65,10 +68,16 @@ async fn main() {
     let data_dir = args.data;
     let out_file = args.out;
     let lang = args.lang;
-    run_preprocessing(&data_dir, &out_file, lang).await;
+    let num_threads = args.threads;
+    run_preprocessing(&data_dir, &out_file, lang, num_threads).await;
 }
 
-async fn run_preprocessing(data_dir: &str, out_file: &str, language: TargetLanguage) {
+async fn run_preprocessing(
+    data_dir: &str,
+    out_file: &str,
+    language: TargetLanguage,
+    num_threads: usize,
+) {
     let (tx, mut rx) = mpsc::channel(10);
     let data_dir = data_dir.to_string();
     let input_th = tokio::spawn(async move { read_input_data(data_dir.as_str(), tx).await });
@@ -77,11 +86,14 @@ async fn run_preprocessing(data_dir: &str, out_file: &str, language: TargetLangu
     let file = File::create(out_file).unwrap();
     let file = Arc::new(Mutex::new(file));
 
-    let mut processing_threads = Vec::new();
-    while let Some(sample_group) = rx.recv().await {
-        let file = file.clone();
-        debug!("recv {}", sample_group.len());
-        processing_threads.push(tokio::spawn(async move {
+    // let mut processing_threads = Vec::new();
+    let rx_stream = async_stream::stream! {
+        while let Some(item) = rx.recv().await {
+            yield item;
+        }
+    };
+    let generated_samples = rx_stream
+        .map(|sample_group: Vec<JsonSample>| async move {
             let samples = process_grouped_samples(&sample_group, language).await;
             let samples: Vec<(Vec<String>, Vec<String>, Vec<String>, Vec<String>, bool)> = samples
                 .into_par_iter()
@@ -110,14 +122,18 @@ async fn run_preprocessing(data_dir: &str, out_file: &str, language: TargetLangu
                     )
                 })
                 .collect();
-            append_jsonl_to_file(&samples, file.lock().await.deref_mut()).unwrap();
-        }));
-    }
-    // wait for all to finish
+            samples
+        })
+        .buffer_unordered(num_threads);
+    generated_samples
+        .for_each(|samples| {
+            let file = file.clone();
+            async move {
+                append_jsonl_to_file(&samples, file.lock().await.deref_mut()).unwrap();
+            }
+        })
+        .await;
     input_th.await.unwrap();
-    for t in processing_threads {
-        t.await.unwrap();
-    }
 }
 
 async fn read_input_data(data_dir: &str, tx: Sender<Vec<JsonSample>>) {
@@ -199,7 +215,6 @@ macro_rules! get_tree_sitter_language {
         }
     };
 }
-
 
 async fn process_grouped_samples(
     sample_group: &Vec<JsonSample>,
@@ -316,7 +331,7 @@ where
     let language = get_tree_sitter_language!(language);
     let query = Query::new(language, &query_string).unwrap();
     let mut query_cursor = QueryCursor::new();
-    let matches = query_cursor.matches(&query, root,|_| code.as_bytes());
+    let matches = query_cursor.matches(&query, root, |_| code.as_bytes());
     let mut callees = HashSet::new();
     for m in matches {
         for capture in m.captures {
@@ -353,4 +368,3 @@ extern "C" {
 //         _ => panic!(),
 //     }
 // }
-
