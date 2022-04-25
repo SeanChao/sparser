@@ -3,7 +3,7 @@ use futures::StreamExt;
 use linya::Progress;
 use log::{debug, error};
 use rayon::prelude::*;
-use sparser::{append_jsonl_to_file, get_node_text, JsonSample, FUNC_CALL_ID_MASK};
+use sparser::{append_jsonl_to_file, get_node_text, CallJsonSample, JsonSample, FUNC_CALL_ID_MASK};
 use std::collections::{BTreeMap, HashSet};
 use std::error::Error;
 use std::fs::{self, File};
@@ -95,31 +95,41 @@ async fn run_preprocessing(
     let generated_samples = rx_stream
         .map(|sample_group: Vec<JsonSample>| async move {
             let samples = process_grouped_samples(&sample_group, language).await;
-            let samples: Vec<(Vec<String>, Vec<String>, Vec<String>, Vec<String>, bool)> = samples
+            let samples: Vec<CallJsonSample> = samples
                 .into_par_iter()
                 .map(|(caller, callee, label)| {
-                    let caller_code_tokens = match label {
-                        true => caller
-                            .code_tokens
-                            .clone()
-                            .into_iter()
-                            .map(|t| {
-                                if &t == &callee.func_name {
-                                    FUNC_CALL_ID_MASK.to_string()
-                                } else {
-                                    t
-                                }
-                            })
-                            .collect::<Vec<String>>(),
-                        false => caller.code_tokens.clone(),
+                    let (caller_code, caller_code_tokens) = match label {
+                        true => {
+                            let tokens = caller
+                                .code_tokens
+                                .clone()
+                                .into_iter()
+                                .map(|t| {
+                                    if &t == &callee.func_name {
+                                        FUNC_CALL_ID_MASK.to_string()
+                                    } else {
+                                        t
+                                    }
+                                })
+                                .collect::<Vec<String>>();
+                            let re =
+                                regex::Regex::new(&format!(r"\b{}\b", &callee.func_name)).unwrap();
+                            let code = re.replace_all(&caller.code, FUNC_CALL_ID_MASK).to_string();
+                            (code, tokens)
+                        }
+                        false => (caller.code.clone(), caller.code_tokens.clone()),
                     };
-                    (
-                        caller_code_tokens,
-                        caller.docstring_tokens.clone(),
-                        callee.code_tokens.clone(),
-                        callee.docstring_tokens.clone(),
+                    CallJsonSample {
+                        caller_code,
+                        caller_comm: caller.docstring.clone(),
+                        callee_code: callee.code.clone(),
+                        callee_comm: callee.docstring.clone(),
                         label,
-                    )
+                        caller_code_tokens: caller_code_tokens,
+                        caller_comm_tokens: caller.docstring_tokens.clone(),
+                        callee_code_tokens: callee.code_tokens.clone(),
+                        callee_comm_tokens: callee.docstring_tokens.clone(),
+                    }
                 })
                 .collect();
             samples

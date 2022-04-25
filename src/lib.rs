@@ -17,6 +17,20 @@ pub struct JsonSample {
     pub docstring_tokens: Vec<String>,
 }
 
+/// A caller-callee pair data sample
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub struct CallJsonSample {
+    pub caller_code: String,
+    pub caller_comm: String,
+    pub callee_code: String,
+    pub callee_comm: String,
+    pub label: bool,
+    pub caller_code_tokens: Vec<String>,
+    pub caller_comm_tokens: Vec<String>,
+    pub callee_code_tokens: Vec<String>,
+    pub callee_comm_tokens: Vec<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Eq, PartialEq, Hash)]
 pub enum DataSample {
     FuncCall(String, String),
