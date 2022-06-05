@@ -7,7 +7,7 @@ use regex::Regex;
 use sparser::{save_dataset, DataSample};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self};
-use tree_sitter::{Language, Node, Parser, Query, QueryCapture, QueryCursor};
+use tree_sitter::{Language, Node, Parser, Query, QueryCursor};
 use walkdir::{DirEntry, WalkDir};
 
 extern "C" {
@@ -55,7 +55,7 @@ where
     let query_string = SEXP_FUNC_CALL;
     let query = Query::new(language, &query_string).unwrap();
     let mut query_cursor = QueryCursor::new();
-    let matches = query_cursor.matches(&query, root, code.as_bytes());
+    let matches = query_cursor.matches(&query, root, |_| code.as_bytes());
     let mut calling_pairs = HashSet::new();
     for m in matches {
         for capture in m.captures {
@@ -95,8 +95,7 @@ fn find_function_comments(
     let func_comm_query_string = SEXP_FUNC_COMM;
     let fc_query = Query::new(language, &func_comm_query_string).unwrap();
     let mut fc_qc = QueryCursor::new();
-    let matches = fc_qc.matches(&fc_query, root, code.as_bytes());
-    let re = Regex::new(r"\s+").unwrap();
+    let matches = fc_qc.matches(&fc_query, root, |_| code.as_bytes());
     let mut func_comments: HashMap<String, String> = HashMap::new();
     let mut func_code: HashMap<String, String> = HashMap::new();
     let mut dup_funcs = HashSet::new(); // duplicated function names are ignore for simplicity
@@ -119,17 +118,16 @@ fn find_function_comments(
                     }
                 }
                 "comment" => {
-                    let com = capture
+                    let mut com = capture
                         .node
                         .utf8_text(&code.as_bytes())
                         .unwrap_or("")
-                        .replace("//", "")
-                        .replace("/*", "")
-                        .replace("*/", "")
+                        .replace("\r\n", "\n")
                         .trim()
-                        .to_string();
-                    let com = com.strip_prefix("*").unwrap_or(&com);
-                    let com = re.replace_all(&com, " ").to_string().trim().to_string() + "\n";
+                        .to_string() ;
+                    if !com.ends_with("\n") {
+                        com.push_str("\n");
+                    }
                     comment.push_str(&com);
                 }
                 "func_src" => {
@@ -266,7 +264,7 @@ fn process_func_call(code: &str, parser: &mut Parser, language: Language) -> Vec
     let func_body_query_string = fs::read_to_string("./query/func_body.sexp").unwrap();
     let fc_query = Query::new(language, &func_body_query_string).unwrap();
     let mut fc_qc = QueryCursor::new();
-    let matches = fc_qc.matches(&fc_query, root, code.as_bytes());
+    let matches = fc_qc.matches(&fc_query, root, |_| code.as_bytes());
     let re = Regex::new(r"\s+").unwrap();
     let mut func_src_map: HashMap<String, String> = HashMap::new();
     let mut dup_funcs = HashSet::new(); // duplicated function names are ignore for simplicity

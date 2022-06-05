@@ -9,7 +9,7 @@ use std::error::Error;
 use std::fs::{self, File};
 use std::io::{self, BufRead};
 use std::ops::DerefMut;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::mpsc::{self, Sender};
@@ -147,19 +147,26 @@ async fn run_preprocessing(
 }
 
 async fn read_input_data(data_dir: &str, tx: Sender<Vec<JsonSample>>) {
-    let paths: Vec<DirEntry> = WalkDir::new(data_dir)
-        .into_iter()
-        .map(|e| e.unwrap())
-        .collect();
-    let files: Vec<DirEntry> = paths
-        .into_iter()
-        .filter(|e| e.file_type().is_file())
-        .collect();
+    // is data_dir dir or file
+    let files = if fs::metadata(data_dir).unwrap().is_file() {
+        vec![PathBuf::from(data_dir)]
+    } else {
+        let paths: Vec<DirEntry> = WalkDir::new(data_dir)
+            .into_iter()
+            .map(|e| e.unwrap())
+            .collect();
+        let files: Vec<_> = paths
+            .into_iter()
+            .filter(|e| e.file_type().is_file())
+            .map(|e| e.into_path())
+            .collect();
+        files
+    };
 
     let files_bar = PROGRESS.lock().await.bar(files.len(), "Files");
     let mut input_threads = Vec::new();
     for (idx, entry) in files.into_iter().enumerate() {
-        let file_path = entry.into_path();
+        let file_path = entry;
         // info!("{}/{} {}", idx + 1, len, file_path.to_str().unwrap());
         if file_path.is_file() {
             let tx = tx.clone();

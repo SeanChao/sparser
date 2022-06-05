@@ -27,6 +27,7 @@ tree-sitter-java = "^0.19.0"
 tree-sitter-javascript = "^0.19.0"
 tree-sitter-python = "0.19.1"
 tree-sitter-ruby = "^0.19.0"
+tree-sitter-solidity = "0.0.3"
 walkdir = "2"
 
 [build-dependencies]
